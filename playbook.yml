@@ -36,17 +36,19 @@
         mode: '0775'
 
     - name: Restore World from S3 if exists
-      shell: "aws s3 cp s3://{{ s3_bucket }}/world_backup.tar.gz /tmp/world.tar.gz || echo 'No backup found'"
+      shell: "aws s3 cp s3://{{ s3_bucket }}/world_backup.tar.gz /tmp/world_backup.tar.gz || echo 'No backup found'"
+      register: s3_download
+      failed_when: "'Completed' not in s3_download.stderr and s3_download.rc != 0"
       ignore_errors: yes      
 
     - name: Check if backup was downloaded
       stat:
-        path: /tmp/world.tar.gz
+        path: /tmp/world_backup.tar.gz
       register: backup_file
 
     - name: Extract backup to /data
       unarchive:
-        src: /tmp/world.tar.gz
+        src: /tmp/world_backup.tar.gz
         dest: /home/ubuntu/minecraft_data
         remote_src: yes
       when: backup_file.stat.exists
