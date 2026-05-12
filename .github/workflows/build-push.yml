@@ -36,7 +36,7 @@ jobs:
         run: |
           docker run -d --name test-mc -e EULA=TRUE -e MEMORY=512M ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.ref_name }}
           echo "Waiting for server to initialize..."
-          for i in $(seq 1 12) do
+          for i in $(seq 1 12); do
             if docker logs test-mc 2>&1 | grep -q "Done"; then
               echo "Smoke test passed!"
               docker stop test-mc && docker rm test-mc
