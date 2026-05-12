@@ -1,0 +1,53 @@
+name: Build and Push to ECR
+
+on:
+  push:
+    tags:
+      - 'v*'
+env: 
+AWS_REGION: us-east-1
+ECR_REPOSITORY: cs312-igloriaj-ops3
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v4
+
+      - name: Build and Tag Image
+        run: |
+          docker pull itzg/minecraft-server:java17-alpine
+          docker tag itzg/minecraft-server:java17-alpine ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.ref_name }}
+
+      - name: Smoke Test
+        run: |
+          docker run -d --name test-mc -e EULA=TRUE -e MEMORY=512M ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.ref_name }}
+          echo "Waiting for server to initialize..."
+          for i in $(seq 1 12) do
+            if docker logs test-mc 2>&1 | grep -q "Done"; then
+              echo "Smoke test passed!"
+              docker stop test-mc && docker rm test-mc
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Smoke test failed: Server did not start in time."
+          docker logs test-mc
+          exit 1
+
+      - name: Push to ECR
+        run: |
+          docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.ref_name }}
