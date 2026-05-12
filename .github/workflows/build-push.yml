@@ -5,8 +5,8 @@ on:
     tags:
       - 'v*'
 env: 
-AWS_REGION: us-east-1
-ECR_REPOSITORY: cs312-igloriaj-ops3
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: cs312-igloriaj-ops3
 
 jobs:
   build-and-push:
