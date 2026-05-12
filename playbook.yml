@@ -5,15 +5,16 @@
   vars:
     ec2_registry_url: "339712850345.dkr.ecr.us-east-1.amazonaws.com/cs312-igloriaj-ops3"
     s3_bucket_name: "cs312-igloriaj-ops3-backups"
-    image_tag: "v1.0.0"
+    image_tag: "v1.0.2"
 
   tasks:
     - name: Install Docker and aws cli
       apt:
         name:
-          - docker
+          - docker.io
           - awscli
-      state: present
+        state: present
+        update_cache: yes
     
     - name: Start Docker service
       service:
@@ -28,21 +29,27 @@
 
     - name: Create data directory
       file:
-        path: /home/ec2-user/minecraft_data
+        path: /home/ubuntu/minecraft_data
         state: directory
-        owner: ec2-user
-        group: ec2-user
+        owner: ubuntu
+        group: ubuntu
+        mode: '0775'
 
     - name: Restore World from S3 if exists
       shell: "aws s3 cp s3://{{ s3_bucket }}/world_backup.tar.gz /tmp/world.tar.gz || echo 'No backup found'"
       ignore_errors: yes      
 
+    - name: Check if backup was downloaded
+      stat:
+        path: /tmp/world.tar.gz
+      register: backup_file
+
     - name: Extract backup to /data
       unarchive:
-        scr: /tmp/world.tar.gz
-        dest: /home/ec2-user/minecraft_data
+        src: /tmp/world.tar.gz
+        dest: /home/ubuntu/minecraft_data
         remote_src: yes
-      when: lookup('fileglob', '/tmp/world.tar.gz') != ""
+      when: backup_file.stat.exists
 
     - name: Run Minecraft Container
       docker_container:
@@ -53,10 +60,9 @@
         ports:
           - "25565:25565"
         volumes: 
-          - /home/ec2-user/minecraft_data:/data
+          - /home/ubuntu/minecraft_data:/data
         env: 
-        EULA: "TRUE"
-        VERSION: "LATEST"
-        TYPE: "PAPER"
-        MEMORY: "512M"
-        MOTD: "JP Igloria - CS312"
+          EULA: "TRUE"
+          VERSION: "1.20.1"
+          MEMORY: "1G"
+          MOTD: "JP Igloria - CS312 Ops 3"

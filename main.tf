@@ -33,7 +33,7 @@ data "aws_ami" "ubuntu" {
 }
 
 resource "aws_instance" "server" {
-  ami           = var.ami_id
+  ami           = data.aws_ami.ubuntu.id
   instance_type = var.instance_type
   iam_instance_profile = "LabInstanceProfile"
   vpc_security_group_ids = [aws_security_group.server.id]
@@ -84,21 +84,26 @@ resource "aws_security_group" "server" {
 }
 
 resource "null_resource" "ansible_trigger" {
-  depends_on = [aws_instance.server, aws_ecr_repository.minecraft]
-  
+  depends_on = [aws_instance.server]
+
   triggers = {
     instance_id = aws_instance.server.id
   }
 
+  # This dummy provisioner ensures SSH is up before Ansible starts
+  provisioner "remote-exec" {
+    inline = ["echo 'SSH is ready!'"]
+
+    connection {
+      type        = "ssh"
+      user        = "ubuntu"
+      private_key = file("~/.ssh/cs312-key.pem")
+      host        = aws_instance.server.public_ip
+    }
+  }
+
   provisioner "local-exec" {
-    command = <<EOT
-      ansible-playbook \
-    	-i '${aws_instance.server.public_ip},' \
-        -u ubuntu \
-	--private-key ~/.ssh/cs312-key.pem \
-	--extra-vars "erc_registry_url=${aws_ecr_repository.minecraft.repository_url} s3_bucket_name=ops3_world_backups" \
-	playbook.yml
-      EOT
+    command = "ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i '${aws_instance.server.public_ip},' -u ubuntu --private-key ~/.ssh/cs312-key.pem --extra-vars 'ecr_registry_url=339712850345.dkr.ecr.us-east-1.amazonaws.com/cs312-igloriaj-ops3 s3_bucket=cs312-igloriaj-ops3-backups' playbook.yml"
   }
 }
 
