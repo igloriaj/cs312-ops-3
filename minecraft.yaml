@@ -1,0 +1,113 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: minecraft-pv
+spec: 
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/k3s/storage/pvc-minecraft_data
+    type: Directory
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minecraft-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+  volumeName: minecraft-pv
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: minecraft-config
+data:
+  VERSION: "1.20.1"
+  MEMORY: "1G"
+  MOTD: "JP Igloria - CS312 Ops 4"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minecraft-secret
+type: Opaque
+data:
+  # "TRUE" base64 encoded
+  EULA: VFJVRQ== 
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minecraft-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minecraft
+  template:
+    metadata:
+      labels:
+        app: minecraft
+    spec:
+      containers:
+        - name: minecraft
+          image: "339712850345.dkr.ecr.us-east-1.amazonaws.com/cs312-igloriaj-ops3:v1.0.2"
+          ports:
+            - containerPort: 25565
+              name: minecraft
+          envFrom:
+            - configMapRef:
+                name: minecraft-config
+          env:
+            - name: EULA
+              valueFrom:
+                secretKeyRef:
+                  name: minecraft-secret
+                  key: EULA
+          startupProbe:
+            tcpSocket:
+              port: 25565
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 15
+          livenessProbe:
+            tcpSocket:
+              port: 25565
+            initialDelaySeconds: 5
+            periodSeconds: 20
+            timeoutSeconds: 5
+          readinessProbe:
+            tcpSocket:
+              port: 25565
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          volumeMounts:
+            - name: minecraft-storage
+              mountPath: /data
+      volumes:
+        - name: minecraft-storage
+          persistentVolumeClaim:
+            claimName:
+              minecraft-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minecraft-service
+spec:
+  type: LoadBalancer
+  selector:
+    app: minecraft
+  ports:
+    - protocol: TCP
+      port: 25565
+      targetPort: 25565

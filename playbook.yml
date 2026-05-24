@@ -3,37 +3,26 @@
   hosts: all
   become: yes
   vars:
-    ec2_registry_url: "339712850345.dkr.ecr.us-east-1.amazonaws.com/cs312-igloriaj-ops3"
-    s3_bucket_name: "cs312-igloriaj-ops3-backups"
+    ecr_registry_url: "339712850345.dkr.ecr.us-east-1.amazonaws.com/cs312-igloriaj-ops3"
+    s3_bucket: "cs312-igloriaj-ops3-backups"
     image_tag: "v1.0.2"
 
   tasks:
-    - name: Install Docker and aws cli
+    - name: Install curl and aws cli
       apt:
         name:
-          - docker.io
+          - curl
           - awscli
         state: present
         update_cache: yes
-    
-    - name: Start Docker service
-      service:
-        name: docker
-        state: started
-        enabled: yes
 
-    - name: Authenticate to ECR
-      shell: |
-        aws ecr get-login-password --region us-east-1 | \
-        docker login --username AWS --password-stdin {{ ecr_registry_url }}
-
-    - name: Create data directory
+    - name: Create local-path destination folder
       file:
-        path: /home/ubuntu/minecraft_data
+        path: /var/lib/rancher/k3s/storage/pvc-minecraft_data
         state: directory
-        owner: ubuntu
-        group: ubuntu
-        mode: '0775'
+        owner: root
+        group: root
+        mode: '0777'
 
     - name: Restore World from S3 if exists
       shell: "aws s3 cp s3://{{ s3_bucket }}/world_backup.tar.gz /tmp/world_backup.tar.gz || echo 'No backup found'"
@@ -49,22 +38,96 @@
     - name: Extract backup to /data
       unarchive:
         src: /tmp/world_backup.tar.gz
-        dest: /home/ubuntu/minecraft_data
+        dest: /var/lib/rancher/k3s/storage/pvc-minecraft_data
         remote_src: yes
       when: backup_file.stat.exists
 
-    - name: Run Minecraft Container
-      docker_container:
-        name: minecraft-server
-        image: "{{ ecr_registry_url }}:{{ image_tag }}"
+    - name: Download the AWS ECR Credential Provider binary
+      get_url:
+        url: https://github.com/dntosas/ecr-credential-provider/releases/download/v1.2.0/ecr-credential-provider-linux-amd64
+        dest: /usr/local/bin/ecr-credential-provider
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Create Kubernetes configuration directory
+      file:
+        path: /etc/kubernetes
+        state: directory
+        owner: root
+        group: root
+        mode: '0755' 
+
+    - name: Create CredentialProviderConfig configuration file
+      copy:
+        dest: /etc/kubernetes/ecr-credential-provider.json
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          apiVersion: kubelet.config.k8s.io/v1
+          kind: CredentialProviderConfig
+          providers:
+            - name: ecr-credential-provider
+              matchImages:
+                - "*.dkr.ecr.*.amazonaws.com"
+                - "*.dkr.ecr.*.amazonaws.com.cn"
+                - "*.dkr.ecr-fips.*.amazonaws.com"
+                - "*.dkr.ecr.us-iso-east-1.c2s.ic.gov"
+                - "*.dkr.ecr.us-isob-east-1.sc2s.sgov.gov"
+              defaultCacheDuration: "12h"
+              apiVersion: credentialprovider.kubelet.k8s.io/v1
+
+    - name: Install k3s linked to the AWS credential provider
+      shell: |
+        curl -sfL https://get.k3s.io | sh -s - \
+          --kubelet-arg="image-credential-provider-config=/etc/kubernetes/ecr-credential-provider.json" \
+          --kubelet-arg="image-credential-provider-bin-dir=/usr/local/bin"
+      args:
+        creates: /usr/local/bin/k3s
+
+    - name: Ensure k3s is started and enabled
+      service:
+        name: k3s
         state: started
-        restart_policy: always
-        ports:
-          - "25565:25565"
-        volumes: 
-          - /home/ubuntu/minecraft_data:/data
-        env: 
-          EULA: "TRUE"
-          VERSION: "1.20.1"
-          MEMORY: "1G"
-          MOTD: "JP Igloria - CS312 Ops 3"
+        enabled: yes
+
+    - name: Wait for cluster to initialize and generation of config file
+      wait_for:
+        path: /etc/rancher/k3s/k3s.yaml
+        state: present
+    
+    - name: Create .kube directory for ubuntu user
+      file:
+        path: /home/ubuntu/.kube
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0750'
+
+    - name: Copy k3s.yaml to user's directory
+      copy:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: /home/ubuntu/.kube/config
+        remote_src: yes
+        owner: ubuntu
+        group: ubuntu
+        mode: '0600'
+
+    - name: add KUBECONFIG to .bashrc
+      lineinfile:
+        path: /home/ubuntu/.bashrc
+        line: 'export KUBECONFIG=~/.kube/config'
+        state: present
+        create: yes
+
+    - name: Copy Minecraft Kubernetes Manifest to server
+      copy:
+        src: minecraft.yaml
+        dest: /home/ubuntu/minecraft.yaml
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Apply minecraft workload config in k3s
+      shell: "k3s kubectl apply -f /home/ubuntu/minecraft.yaml"
