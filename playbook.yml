@@ -121,6 +121,30 @@
         state: present
         create: yes
 
+    - name: Install Helm
+      shell: |
+        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      become: true
+    
+    - name: Add Prometheus Helm repository
+      shell: |
+        helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+        helm repo update
+      become: false
+      changed_when: true
+
+    - name: Deploy kube-prometheus-stack
+      shell: |
+        helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+          --namespace monitoring --create-namespace \
+          --set grafana.service.type=NodePort \
+          --set grafana.service.nodePort=31000 \
+          --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false \
+          --set prometheus.prometheusSpec.ruleSelectorNilUsesHelmValues=false \
+          --set grafana.sidecar.image.tag=1.28.0
+      become: false
+      changed_when: true
+
     - name: Copy Minecraft Kubernetes Manifest to server
       copy:
         src: minecraft.yaml
@@ -131,3 +155,5 @@
 
     - name: Apply minecraft workload config in k3s
       shell: "k3s kubectl apply -f /home/ubuntu/minecraft.yaml"
+
+

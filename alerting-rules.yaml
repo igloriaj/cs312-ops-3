@@ -1,0 +1,47 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cs312-alerts
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  groups:
+    - name: cs312.rules
+      rules:
+        - alert: PodCrashLooping
+          expr: increase(kube_pod_container_status_restarts_total{namespace="default"}[5m]) > 3
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Pod {{ $labels.pod }} is crash looping"
+            runbook: |
+              -Run kubectl describe pod <name>
+              -Look for error messages in “Events”
+              -Check logs for the previous pod to investigate what caused the crash
+              -Rollback with kubectl rollout undo
+
+        - alert: HighNodeCPU
+          expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[2m])) * 100) > 80
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Node CPU usage above 80% for 2 minutes"
+            runbook: |
+              -Run kubectl top pods –sort-by=cpu to identify the pod consuming the most CPU resources
+              -If it is unexpected, check its resource limits and consider scaling.
+
+        - alert: MinecraftServerDown
+          expr: minecraft_status_healthy == 0
+          for: 1m
+          labels: 
+            severity: critical
+          annotations:
+            summary: "Minecraft server is offline"
+            runbook: |
+              -Run kubectl get pods -l app=minecraft-server to check if the pod is experiencing a crash or error
+              -Check the logs for error messages which explain issues with Java or other configuration
+              -If logs are frozen, run ‘kubectl rollout restart deployment/minecraft-server’ to force a new server pod.
+

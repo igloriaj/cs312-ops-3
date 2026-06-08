@@ -49,14 +49,15 @@ kind: Deployment
 metadata:
   name: minecraft-server
 spec:
+  type: Recreate
   replicas: 1
   selector:
     matchLabels:
-      app: minecraft
+      app: minecraft-server
   template:
     metadata:
       labels:
-        app: minecraft
+        app: minecraft-server
     spec:
       containers:
         - name: minecraft
@@ -64,6 +65,9 @@ spec:
           ports:
             - containerPort: 25565
               name: minecraft
+          resources:
+            requests:
+              memory: "1Gi"
           envFrom:
             - configMapRef:
                 name: minecraft-config
@@ -93,6 +97,27 @@ spec:
           volumeMounts:
             - name: minecraft-storage
               mountPath: /data
+        - name: mc-monitor
+          image: "339712850345.dkr.ecr.us-east-1.amazonaws.com/mc-monitor:v1"
+          imagePullPolicy: Always
+          args:
+            - export-for-prometheus
+          env:
+            - name: EXPORT_SERVERS
+              value: "localhost:25565"
+            - name: EXPORT_PORT
+              value: "8080"
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory:
+                "128Mi"
+          ports:
+            - name: metrics
+              containerPort: 8080 
+
       volumes:
         - name: minecraft-storage
           persistentVolumeClaim:
@@ -103,11 +128,42 @@ apiVersion: v1
 kind: Service
 metadata:
   name: minecraft-service
+  namespace: default
+  labels:
+    app:
+      minecraft-server
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
 spec:
   type: LoadBalancer
   selector:
-    app: minecraft
+    app: minecraft-server
   ports:
-    - protocol: TCP
+    - name: game
+      protocol: TCP
       port: 25565
       targetPort: 25565
+    - name: metrics
+      protocol: TCP
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata: 
+  name: mc-monitor-scraper
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames:
+      - default
+  selector:
+    matchLabels:
+      app: minecraft-server
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+
